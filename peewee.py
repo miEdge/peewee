@@ -2125,6 +2125,28 @@ class QueryCompiler(object):
                 clauses.append(query.database.default_insert_clause(
                     query.model_class))
 
+        if query._on_duplicate_key_update:
+            fields, update = [], []
+            have_fields = False
+
+            for row_dict in query._iter_rows():
+                if not have_fields:
+                    fields = sorted(
+                        row_dict.keys(), key=operator.attrgetter('_sort_key'))
+                    have_fields = True
+                    break
+
+            values = []
+            for field in fields:
+                update.append(Expression(
+                    field.as_entity(with_table=False),
+                    OP.EQ,
+                    SQL("VALUES(%s)" % field.db_column),
+                    flat=True))  # No outer parens, no table alias.
+
+            clauses.append(SQL('ON DUPLICATE KEY UPDATE'))
+            clauses.append(CommaClause(*update))
+
         if query.is_insert_returning:
             clauses.extend([
                 SQL('RETURNING'),
@@ -3484,6 +3506,7 @@ class InsertQuery(_WriteQuery):
         self._query = query
         self._validate_fields = validate_fields
         self._on_conflict = None
+        self._on_duplicate_key_update = False
 
     def _iter_rows(self):
         model_meta = self.model_class._meta
@@ -3524,6 +3547,7 @@ class InsertQuery(_WriteQuery):
         query._return_id_list = self._return_id_list
         query._validate_fields = self._validate_fields
         query._on_conflict = self._on_conflict
+        query._on_duplicate_key_update = self._on_duplicate_key_update
         return query
 
     join = not_allowed('joining')
@@ -3536,6 +3560,10 @@ class InsertQuery(_WriteQuery):
     @returns_clone
     def on_conflict(self, action=None):
         self._on_conflict = action
+
+    @returns_clone
+    def on_duplicate_key_update(self):
+        self._on_duplicate_key_update = True
 
     @returns_clone
     def return_id_list(self, return_id_list=True):
